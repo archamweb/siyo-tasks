@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.10.3</title>
+<title>SIYO — Gestionnaire de Tâches v3.10.2</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1612,7 +1612,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.10.3 (3 espaces + codes)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.10.2 (3 espaces)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -2330,37 +2330,6 @@ function refreshActivePanels() {
 }
 
 /**
- * ★ v3.10.3 — Codes d'accès par espace (cloison cosmétique).
- *
- * ⚠️ IMPORTANT : ces codes sont visibles dans le code source (repo Public).
- * Ils empêchent un collègue d'entrer par curiosité, mais ne constituent
- * PAS une sécurité réelle contre quelqu'un qui lirait le code source.
- * Pour une vraie protection, il faudrait vérifier les codes côté backend
- * (Apps Script) et passer le repo en privé.
- *
- * Pour changer un code : modifie la valeur ci-dessous, commit sur GitHub.
- */
-const SPACE_CODES = {
-  'tech':   '1957',   // Direction Technique (toi)
-  'etude':  '2480',   // Étude de Prix
-  'compta': '3615'    // Comptabilité
-};
-
-// Mémoire de session : espaces déjà déverrouillés (évite de redemander le code
-// à chaque rechargement tant que le localStorage n'est pas vidé)
-function isSpaceUnlocked(space) {
-  try {
-    return localStorage.getItem('siyo_unlocked_' + space) === '1';
-  } catch(e) { return false; }
-}
-function markSpaceUnlocked(space) {
-  try { localStorage.setItem('siyo_unlocked_' + space, '1'); } catch(e) {}
-}
-function lockSpace(space) {
-  try { localStorage.removeItem('siyo_unlocked_' + space); } catch(e) {}
-}
-
-/**
  * ★ v3.10 — Multi-espace : choix d'espace au démarrage.
  * Stocke la sélection en localStorage et lance le chargement complet de l'app.
  */
@@ -2369,27 +2338,6 @@ async function chooseSpace(space) {
     console.error('[chooseSpace] Espace invalide:', space);
     return;
   }
-
-  // ★ v3.10.3 — Vérification du code d'accès (cloison cosmétique)
-  // Si l'espace n'a pas encore été déverrouillé dans ce navigateur, on demande le code
-  if (!isSpaceUnlocked(space)) {
-    const expectedCode = SPACE_CODES[space];
-    if (expectedCode) {
-      const label = SPACE_LABELS[space].full;
-      const entered = prompt('🔒 Code d\'accès pour « ' + label +' » :');
-      if (entered === null) {
-        // L'utilisateur a annulé — on reste sur l'écran de sélection
-        return;
-      }
-      if (entered.trim() !== expectedCode) {
-        alert('❌ Code incorrect pour « ' + label + ' ».');
-        return;
-      }
-      // Code correct → on mémorise pour ne pas redemander à chaque fois
-      markSpaceUnlocked(space);
-    }
-  }
-
   currentSpace = space;
   try { localStorage.setItem('siyo_current_space', space); } catch(e) {}
 
@@ -2416,11 +2364,6 @@ async function chooseSpace(space) {
  */
 function changeSpace() {
   if (!confirm('Changer d\'espace de travail ?\n\nTes saisies en cours seront synchronisées.')) return;
-  // ★ v3.10.3 — Option 2 : reverrouiller l'espace qu'on quitte
-  // (le code sera redemandé pour y revenir)
-  if (currentSpace) {
-    lockSpace(currentSpace);
-  }
   // On ne supprime pas localStorage ici : on remet juste à null pour retomber sur l'écran
   currentSpace = null;
   try { localStorage.removeItem('siyo_current_space'); } catch(e) {}
