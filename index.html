@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.10.2</title>
+<title>SIYO — Gestionnaire de Tâches v3.10.6</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1495,6 +1495,15 @@
   </div>
 </div>
 
+<!-- ★ v3.10.6 — MODAL DÉTAILS DE TÂCHE (clic sur le titre dans le Suivi) -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal">
+    <div class="modal-head"><h3>📋 Détails de la tâche</h3></div>
+    <div class="modal-body" id="detailBody"></div>
+    <div class="modal-foot" id="detailFoot" style="flex-wrap:wrap;gap:8px"></div>
+  </div>
+</div>
+
 <!-- ★ v3.6 — MODAL BLOCAGE -->
 <div class="modal-overlay" id="blockModal">
   <div class="modal">
@@ -1612,7 +1621,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.10.2 (3 espaces)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.10.6 (3 espaces)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -2332,12 +2341,14 @@ function refreshActivePanels() {
 /**
  * ★ v3.10 — Multi-espace : choix d'espace au démarrage.
  * Stocke la sélection en localStorage et lance le chargement complet de l'app.
+ * ★ v3.10.6 — Codes d'accès retirés (cloison cosmétique abandonnée après test).
  */
 async function chooseSpace(space) {
   if (!SPACE_LABELS[space]) {
     console.error('[chooseSpace] Espace invalide:', space);
     return;
   }
+
   currentSpace = space;
   try { localStorage.setItem('siyo_current_space', space); } catch(e) {}
 
@@ -2892,6 +2903,115 @@ function setQuickDue(when) {
 //  ÉDITION DE TÂCHE (A1 v3.5)
 // ══════════════════════════════════════
 let pendingEditId = null;
+
+/**
+ * ★ v3.10.6 — Fenêtre de détails de tâche.
+ * Ouverte au clic sur le titre/la ligne dans le Suivi.
+ * Affiche toutes les infos (création, échéance, statut, blocage...)
+ * + les boutons d'action selon le statut.
+ */
+function openDetailModal(id) {
+  const t = tasks.find(x => x.id === id);
+  if (!t) return;
+
+  // ── Préparer les libellés ──
+  const STATUS_LABELS = {
+    'pending':   { txt: 'En cours',  color: 'var(--accent-light)', icon: '🔵' },
+    'done':      { txt: 'Fait',      color: 'var(--done)',         icon: '✅' },
+    'cancelled': { txt: 'Annulée',   color: 'var(--cancelled)',    icon: '❌' },
+    'blocked':   { txt: 'Bloquée',   color: 'var(--blocked)',      icon: '🚧' }
+  };
+  const st = STATUS_LABELS[t.status] || STATUS_LABELS['pending'];
+
+  // Date de création (ISO timestamp → JJ/MM/AAAA à HHhMM)
+  let createdStr = '—';
+  if (t.createdAt) {
+    const d = new Date(t.createdAt);
+    if (!isNaN(d.getTime())) {
+      createdStr = d.toLocaleDateString('fr-FR') + ' à ' +
+        String(d.getHours()).padStart(2,'0') + 'h' + String(d.getMinutes()).padStart(2,'0');
+    }
+  }
+
+  // Échéance (YYYY-MM-DD → JJ/MM/AAAA) + retard éventuel
+  let dueStr = '—';
+  let dueExtra = '';
+  const dueIso = normalizeDateForInput(t.dueDate);
+  if (dueIso) {
+    const [y, m, d] = dueIso.split('-');
+    dueStr = d + '/' + m + '/' + y;
+    const todayStr_ = todayIso();
+    if (t.status === 'pending' || t.status === 'blocked') {
+      if (dueIso < todayStr_) {
+        const days = Math.round((new Date(todayStr_) - new Date(dueIso)) / 86400000);
+        dueExtra = ' <span style="color:var(--overdue);font-weight:700">⚠ EN RETARD ' + days + 'j</span>';
+      } else if (dueIso > todayStr_) {
+        dueExtra = ' <span style="color:var(--future);font-weight:600">📅 planifiée</span>';
+      } else {
+        dueExtra = ' <span style="color:var(--accent-light);font-weight:600">🎯 aujourd\'hui</span>';
+      }
+    }
+  }
+
+  // Bloc blocage si statut bloqué
+  let blockedHtml = '';
+  if (t.status === 'blocked') {
+    let sinceStr = '';
+    if (t.blockedSince) {
+      const bd = new Date(t.blockedSince);
+      if (!isNaN(bd.getTime())) sinceStr = ' depuis le ' + bd.toLocaleDateString('fr-FR');
+    }
+    blockedHtml = `
+      <div style="background:var(--blocked-soft);border-left:3px solid var(--blocked);border-radius:8px;padding:10px 12px;margin-top:12px">
+        <div style="font-weight:700;color:var(--blocked);margin-bottom:4px">🚧 Tâche bloquée${sinceStr}</div>
+        <div style="font-size:14px"><b>Raison :</b> ${esc(t.blockedReason || '—')}</div>
+        <div style="font-size:14px"><b>Relancer :</b> ${esc(t.blockedWho || '—')}</div>
+      </div>`;
+  }
+
+  // ── Corps de la modale ──
+  const rowStyle = 'display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border,#eee);font-size:14px';
+  const lblStyle = 'color:var(--text-muted);flex-shrink:0';
+  document.getElementById('detailBody').innerHTML = `
+    <div style="font-size:16px;font-weight:700;margin-bottom:4px;word-break:break-word">${esc(t.text)}</div>
+    ${t.carriedOver ? '<span class="badge-reporte">REPORTÉ</span>' : ''}
+    <div style="margin-top:12px">
+      <div style="${rowStyle}"><span style="${lblStyle}">Statut</span><span style="color:${st.color};font-weight:700">${st.icon} ${st.txt}</span></div>
+      <div style="${rowStyle}"><span style="${lblStyle}">Projet</span><span style="font-weight:600;text-align:right">${esc(t.project || 'Sans projet')}</span></div>
+      <div style="${rowStyle}"><span style="${lblStyle}">Créée le</span><span>${createdStr}</span></div>
+      <div style="${rowStyle};border-bottom:none"><span style="${lblStyle}">Échéance</span><span>${dueStr}${dueExtra}</span></div>
+    </div>
+    ${blockedHtml}
+  `;
+
+  // ── Boutons d'action selon le statut ──
+  // Chaque action ferme d'abord la fenêtre de détails.
+  let btns = '';
+  if (t.status === 'pending') {
+    btns = `
+      <button class="btn btn-primary" onclick="closeDetailModal();setStatus('${t.id}','done')">✓ Fait</button>
+      <button class="btn btn-outline" onclick="closeDetailModal();setStatus('${t.id}','cancelled')">✕ Annulé</button>
+      <button class="btn btn-outline" onclick="closeDetailModal();openBlockModal('${t.id}')">🚧 Bloquer</button>`;
+  } else if (t.status === 'blocked') {
+    btns = `
+      <button class="btn btn-primary" onclick="closeDetailModal();setStatus('${t.id}','done')">✓ Fait</button>
+      <button class="btn btn-outline" onclick="closeDetailModal();unblockTask('${t.id}')">↩ Débloquer</button>`;
+  } else {
+    btns = `
+      <button class="btn btn-outline" onclick="closeDetailModal();setStatus('${t.id}','pending')">↩ Rétablir</button>`;
+  }
+  btns += `
+      <button class="btn btn-outline" onclick="closeDetailModal();openEditModal('${t.id}')">✎ Éditer</button>
+      <button class="btn btn-danger" onclick="closeDetailModal();openDeleteModal('${t.id}')">🗑 Supprimer</button>
+      <button class="btn btn-outline" onclick="closeDetailModal()" style="margin-left:auto">Fermer</button>`;
+
+  document.getElementById('detailFoot').innerHTML = btns;
+  document.getElementById('detailModal').classList.add('show');
+}
+
+function closeDetailModal() {
+  document.getElementById('detailModal').classList.remove('show');
+}
 
 function openEditModal(id) {
   if (!guardWrite('edit')) return;
@@ -4204,8 +4324,16 @@ function renderSuivi() {
         `;
       }
 
+      // ★ v3.10.5 — Anti-erreur de manipulation :
+      // - La CHECKBOX garde le geste rapide « valider » (si pending)
+      // - Le clic sur le TITRE / la ligne ouvre l'ÉDITION (plus de
+      //   validation accidentelle en touchant le titre)
+      const cboxClick = (t.status === 'pending')
+        ? `onclick="event.stopPropagation();setStatus('${t.id}','done')" title="Marquer comme fait"`
+        : '';
+
       row.innerHTML = `
-        <div class="cbox" style="${cboxBg}">
+        <div class="cbox" ${cboxClick} style="${cboxBg}">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.5L5.5 10.5L11.5 3.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
         <div style="flex:1;min-width:0">
@@ -4218,7 +4346,9 @@ function renderSuivi() {
           <button class="btn-x" onclick="event.stopPropagation();openDeleteModal('${t.id}')" title="Supprimer" style="margin-left:2px">×</button>
         </div>
       `;
-      row.onclick = () => { if(t.status==='pending') setStatus(t.id,'done'); };
+      // ★ v3.10.6 — Clic sur la ligne (titre inclus) = fenêtre de DÉTAILS
+      // (lecture seule + boutons d'action ; la checkbox reste le geste rapide « Fait »)
+      row.onclick = () => { openDetailModal(t.id); };
       body.appendChild(row);
     });
 
