@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.10.6</title>
+<title>SIYO — Gestionnaire de Tâches v3.10.7</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -849,7 +849,7 @@
      ═══════════════════════════════════════════════════════════ */
   .timing-tabs {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 6px;
     margin-bottom: 12px;
   }
@@ -925,6 +925,15 @@
     border-color: var(--future);
     box-shadow: 0 2px 8px rgba(25, 118, 210, 0.25);
   }
+  /* ★ v3.10.7 — Onglet Bloquées (orange) */
+  .timing-tab.t-bloquees {
+    border-color: var(--blocked-soft);
+  }
+  .timing-tab.t-bloquees.active {
+    background: var(--blocked);
+    border-color: var(--blocked);
+    box-shadow: 0 2px 8px rgba(230, 126, 34, 0.25);
+  }
   /* Badge d'alerte rouge sur l'onglet Retards quand > 0 */
   .timing-tab .tt-alert {
     position: absolute;
@@ -944,16 +953,18 @@
     50% { transform: scale(1.15); opacity: 0.8; }
   }
 
-  /* Mobile : onglets plus compacts */
+  /* Mobile : onglets plus compacts (5 onglets depuis v3.10.7) */
   @media (max-width: 480px) {
-    .timing-tabs { gap: 4px; }
-    .timing-tab { padding: 7px 4px; }
-    .timing-tab .tt-icon { font-size: 14px; }
-    .timing-tab .tt-label { font-size: 10px; letter-spacing: 0.3px; }
-    .timing-tab .tt-count { font-size: 16px; margin-top: 3px; }
+    .timing-tabs { gap: 3px; }
+    .timing-tab { padding: 6px 2px; }
+    .timing-tab .tt-icon { font-size: 13px; }
+    .timing-tab .tt-label { font-size: 9px; letter-spacing: 0.2px; }
+    .timing-tab .tt-count { font-size: 15px; margin-top: 2px; }
   }
   @media (max-width: 360px) {
-    .timing-tab .tt-label { font-size: 9px; }
+    .timing-tab { padding: 5px 1px; }
+    .timing-tab .tt-label { font-size: 8px; letter-spacing: 0; }
+    .timing-tab .tt-count { font-size: 14px; }
   }
 
   /* Modal "Tous les projets" */
@@ -1621,7 +1632,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.10.6 (3 espaces)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.10.7 (3 espaces)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -1711,7 +1722,7 @@ try {
 } catch(e) {}
 try {
   const savedTiming = localStorage.getItem('siyo_timing_filter');
-  if (savedTiming && ['all','overdue','today','planned'].includes(savedTiming)) {
+  if (savedTiming && ['all','overdue','today','planned','blocked'].includes(savedTiming)) {
     currentTimingFilter = savedTiming;
   }
 } catch(e) {}
@@ -1761,14 +1772,27 @@ function filterTasksByProject(taskList) {
 }
 
 // ★ v3.9.3 — Filtre TIMING (retards / du jour / planifié)
+// ★ v3.10.7 — Ajout du mode 'blocked' + les bloquées sortent des retards
 function filterTasksByTiming(taskList, timingMode) {
   const mode = timingMode || currentTimingFilter || 'all';
   if (mode === 'all') return taskList;
 
   const today = todayIso();
+
+  // ★ v3.10.7 — Mode "Bloquées" : uniquement les tâches au statut bloqué
+  if (mode === 'blocked') {
+    return taskList.filter(t => t.status === 'blocked');
+  }
+
   return taskList.filter(t => {
     // Les filtres timing ne concernent que les tâches actives
     if (t.status !== 'pending' && t.status !== 'blocked') return false;
+
+    // ★ v3.10.7 — Une tâche BLOQUÉE est "gelée" : on attend un tiers.
+    // Elle ne doit donc PAS apparaître dans Retards / Du jour / Planifié
+    // (elle a son propre onglet dédié). Son retard ne t'est pas imputable
+    // tant que le blocage dure.
+    if (t.status === 'blocked') return false;
 
     const due = t.dueDate ? normalizeDateForInput(t.dueDate) : '';
 
@@ -1787,7 +1811,7 @@ function filterTasksByTiming(taskList, timingMode) {
   });
 }
 
-// ★ v3.9.3 — Calcule les compteurs pour les 4 onglets timing
+// ★ v3.9.3 — Calcule les compteurs pour les onglets timing
 // (sur la base filtrée par projet, pour cohérence avec la barre de chips)
 function getTimingCounts() {
   const baseTasks = filterTasksByProject(tasks);
@@ -1795,13 +1819,14 @@ function getTimingCounts() {
     all: baseTasks.length,
     overdue: filterTasksByTiming(baseTasks, 'overdue').length,
     today: filterTasksByTiming(baseTasks, 'today').length,
-    planned: filterTasksByTiming(baseTasks, 'planned').length
+    planned: filterTasksByTiming(baseTasks, 'planned').length,
+    blocked: filterTasksByTiming(baseTasks, 'blocked').length  // ★ v3.10.7
   };
 }
 
 // Activer un filtre timing (ne re-render que ce qui dépend)
 function setTimingFilter(mode) {
-  if (!['all','overdue','today','planned'].includes(mode)) mode = 'all';
+  if (!['all','overdue','today','planned','blocked'].includes(mode)) mode = 'all';
   currentTimingFilter = mode;
   saveTimingFilter();
   renderTimingTabs();
@@ -1820,7 +1845,8 @@ function renderTimingTabs() {
     { id: 'all',      cls: 't-all',      icon: '🔵', label: 'Tout',     count: c.all },
     { id: 'overdue',  cls: 't-retards',  icon: '⚠️', label: 'Retards',  count: c.overdue },
     { id: 'today',    cls: 't-jour',     icon: '🎯', label: 'Du jour',  count: c.today },
-    { id: 'planned',  cls: 't-planifie', icon: '📅', label: 'Planifié', count: c.planned }
+    { id: 'planned',  cls: 't-planifie', icon: '📅', label: 'Planifié', count: c.planned },
+    { id: 'blocked',  cls: 't-bloquees', icon: '🚧', label: 'Bloquées', count: c.blocked }  // ★ v3.10.7
   ];
 
   container.innerHTML = tabs.map(t => {
@@ -3537,9 +3563,9 @@ function filterTasksForExport(scope, exportDate) {
       return baseTasks.slice();
 
     case 'overdue':
+      // ★ v3.10.7 — Cohérence : les bloquées ne sont PAS des retards
       return baseTasks.filter(t => {
-        if (t.status !== 'pending' && t.status !== 'blocked') return false;
-        if (t.status === 'blocked') return true;
+        if (t.status !== 'pending') return false;
         const due = normalizeDateForInput(t.dueDate);
         return due && due < refDate;
       });
@@ -4224,8 +4250,9 @@ function renderSuivi() {
     const blocked = section.filter(t=>t.status==='blocked').length;
     const total = section.length;
     // ★ v3.7 — Compteurs par échéance pour les actives
+    // ★ v3.10.7 — Cohérence : une bloquée n'est pas un retard (elle est gelée)
     const overdueProj = section.filter(t =>
-      (t.status === 'pending' || t.status === 'blocked') && dueState(t) === 'overdue'
+      t.status === 'pending' && dueState(t) === 'overdue'
     ).length;
     const futureProj = section.filter(t => !isExigible(t) && t.status === 'pending').length;
     // ★ v3.7 — Progression basée sur exigibles uniquement
@@ -4374,8 +4401,9 @@ function updateHeader() {
   const cancelled = exigibles.filter(t => t.status === 'cancelled').length;
   const blocked = exigibles.filter(t => t.status === 'blocked').length;
   const pending = exigibles.filter(t => t.status === 'pending').length;
+  // ★ v3.10.7 — Une bloquée n'est pas un retard : elle a son propre pill 🚧
   const overdue = baseTasks.filter(t =>
-    (t.status === 'pending' || t.status === 'blocked') &&
+    t.status === 'pending' &&
     dueState(t) === 'overdue'
   ).length;
 
