@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.15</title>
+<title>SIYO — Gestionnaire de Tâches v3.16</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1360,9 +1360,9 @@
           <div id="projectDropdown" class="autocomplete-dropdown"></div>
         </div>
       </div>
-      <!-- ★ v3.11 — Entreprise (tous espaces) + Assignation (compta only) -->
+      <!-- ★ v3.11 — Entreprise + Assignation | ★ v3.16 : visibles selon l'espace -->
       <div class="form-row">
-        <div class="input-group" style="flex:1">
+        <div class="input-group" id="companyGroup" style="flex:1">
           <label>Entreprise <span style="color:var(--text-muted);font-weight:400;font-size:13px">(optionnel)</span></label>
           <select id="fCompany" autocomplete="off"
             style="padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:15px;font-family:'DM Sans',sans-serif;background:#fff;color:var(--text-dark);width:100%">
@@ -1443,6 +1443,9 @@
     </div>
   </div>
 
+  <!-- ★ v3.16 — Bandeau semaine (mode hebdo, tech) -->
+  <div id="weekBanner" style="display:none;background:var(--primary);color:#fff;border-radius:10px;padding:10px 16px;margin-bottom:12px;font-weight:700;font-size:15px;text-align:center"></div>
+
   <!-- ★ v3.9.3 — Onglets de filtre TIMING -->
   <div class="timing-tabs" id="timingTabs"></div>
 
@@ -1456,6 +1459,16 @@
     </button>
   </div>
   <div id="suiviContainer"></div>
+
+  <!-- ★ v3.16 — Volet « Fait cette semaine » (mode hebdo, tech) -->
+  <div id="weekArchiveCard" class="card" style="display:none;margin-top:14px">
+    <div class="card-head" style="cursor:pointer;user-select:none" onclick="toggleWeekArchive()">
+      <h3>🗂 Fait cette semaine <span id="weekArchiveCount" style="font-weight:600;color:var(--text-muted);font-size:14px"></span></h3>
+      <span id="weekArchiveChevron" style="font-size:14px;color:var(--text-muted)">▼</span>
+    </div>
+    <div class="card-body" id="weekArchiveBody" style="padding:0"></div>
+  </div>
+
   <!-- v3.3 : plus de boutons Clôture/Reset - auto-clôture 23h50 uniquement -->
   <div id="autoClotureInfo" style="text-align:center;padding:16px 0;font-size:15px;color:var(--text-muted);display:none">
     🕐 Clôture automatique à 23h50 (heure d'Abidjan)
@@ -1556,7 +1569,7 @@
             <label>Projet</label>
             <select id="searchProject" onchange="renderSearchResults()"></select>
           </div>
-          <div class="sf-item">
+          <div class="sf-item" id="searchCompanyItem">
             <label>Entreprise</label>
             <select id="searchCompany" onchange="renderSearchResults()">
               <option value="">Toutes</option>
@@ -1612,10 +1625,10 @@
 
   <!-- ★ v3.14 — SOUS-VUE : Tendances (stats décisionnelles) -->
   <div id="reportView-trends" style="display:none">
-    <!-- Vue 1 : Performance par mois -->
+    <!-- Vue 1 : Performance par période (mois, ou semaine en mode hebdo v3.16) -->
     <div class="card">
       <div class="card-head">
-        <h3>📈 Performance par mois</h3>
+        <h3 id="trendsMonthlyTitle">📈 Performance par mois</h3>
         <span style="font-size:13px;color:var(--text-muted)">Réal. / (Créées − Ann. − Bloq.)</span>
       </div>
       <div class="card-body" id="trendsMonthly" style="padding:14px 16px">
@@ -1670,8 +1683,8 @@
         <label>Échéance</label>
         <input type="date" id="editDueDate" autocomplete="off">
       </div>
-      <!-- ★ v3.11 — Édition entreprise -->
-      <div class="input-group" style="margin-top:12px">
+      <!-- ★ v3.11 — Édition entreprise (★ v3.16 : masquée si l'espace n'utilise pas l'entreprise) -->
+      <div class="input-group" id="editCompanyGroup" style="margin-top:12px">
         <label>Entreprise</label>
         <select id="editCompany" autocomplete="off"
           style="padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:15px;font-family:'DM Sans',sans-serif;background:#fff;color:var(--text-dark);width:100%">
@@ -1837,7 +1850,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.15 (tendances + export diagnostic)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.16 (mode hebdomadaire tech)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -1911,6 +1924,54 @@ function spaceHasAssignment(space) {
   return Array.isArray(SPACE_MEMBERS[space]) && SPACE_MEMBERS[space].length > 0;
 }
 
+// ★ v3.16 — Fonctionnalités par espace (diagnostic du 10/08/2026) :
+// - weekly : vue et évaluation HEBDOMADAIRES (tech uniquement pour l'instant).
+//   Le moteur de clôture quotidienne reste inchangé (archivage invisible).
+// - company : champ Entreprise visible (inutile en tech, utile compta/étude).
+const SPACE_FEATURES = {
+  'tech':   { weekly: true,  company: false },
+  'etude':  { weekly: false, company: true  },
+  'compta': { weekly: false, company: true  }
+};
+function spaceIsWeekly(space) {
+  return !!(SPACE_FEATURES[space] && SPACE_FEATURES[space].weekly);
+}
+function spaceHasCompany(space) {
+  return !!(SPACE_FEATURES[space] && SPACE_FEATURES[space].company);
+}
+
+// ★ v3.16 — Helpers semaine (lundi → dimanche), en heure locale
+function isoFromLocalDate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// Lundi de la semaine contenant la date ISO donnée
+function weekStartIso(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  const dow = (d.getDay() + 6) % 7; // 0 = lundi ... 6 = dimanche
+  d.setDate(d.getDate() - dow);
+  return isoFromLocalDate(d);
+}
+// Dimanche de la semaine contenant la date ISO donnée
+function weekEndIso(iso) {
+  const d = new Date(weekStartIso(iso) + 'T00:00:00');
+  d.setDate(d.getDate() + 6);
+  return isoFromLocalDate(d);
+}
+// Échéance par défaut à la saisie : dimanche de la semaine (tech) / aujourd'hui (autres)
+function defaultDueIso() {
+  return spaceIsWeekly(currentSpace) ? weekEndIso(todayIso()) : todayIso();
+}
+// Libellé "Semaine du 10 au 16 août 2026"
+function weekLabel(iso) {
+  const MOIS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+  const s = new Date(weekStartIso(iso) + 'T00:00:00');
+  const e = new Date(weekEndIso(iso) + 'T00:00:00');
+  if (s.getMonth() === e.getMonth()) {
+    return `Semaine du ${s.getDate()} au ${e.getDate()} ${MOIS[e.getMonth()]} ${e.getFullYear()}`;
+  }
+  return `Semaine du ${s.getDate()} ${MOIS[s.getMonth()]} au ${e.getDate()} ${MOIS[e.getMonth()]} ${e.getFullYear()}`;
+}
+
 let currentSpace = null;  // sera défini par chooseSpace() au démarrage
 
 // Charger l'espace mémorisé (si déjà choisi avant)
@@ -1940,7 +2001,7 @@ try {
 } catch(e) {}
 try {
   const savedTiming = localStorage.getItem('siyo_timing_filter');
-  if (savedTiming && ['all','overdue','today','planned','blocked'].includes(savedTiming)) {
+  if (savedTiming && ['all','week','overdue','today','planned','blocked'].includes(savedTiming)) {
     currentTimingFilter = savedTiming;
   }
 } catch(e) {}
@@ -1996,6 +2057,9 @@ function filterTasksByTiming(taskList, timingMode) {
   if (mode === 'all') return taskList;
 
   const today = todayIso();
+  const weekly = spaceIsWeekly(currentSpace);  // ★ v3.16
+  const wStart = weekStartIso(today);
+  const wEnd = weekEndIso(today);
 
   // ★ v3.10.7 — Mode "Bloquées" : uniquement les tâches au statut bloqué
   if (mode === 'blocked') {
@@ -2007,13 +2071,32 @@ function filterTasksByTiming(taskList, timingMode) {
     if (t.status !== 'pending' && t.status !== 'blocked') return false;
 
     // ★ v3.10.7 — Une tâche BLOQUÉE est "gelée" : on attend un tiers.
-    // Elle ne doit donc PAS apparaître dans Retards / Du jour / Planifié
+    // Elle ne doit donc PAS apparaître dans Retards / Semaine / Planifié
     // (elle a son propre onglet dédié). Son retard ne t'est pas imputable
     // tant que le blocage dure.
     if (t.status === 'blocked') return false;
 
     const due = t.dueDate ? normalizeDateForInput(t.dueDate) : '';
 
+    // ★ v3.16 — MODE HEBDO : l'unité de temps est la SEMAINE
+    if (weekly) {
+      if (mode === 'week') {
+        // Cette semaine : échéance dans [lundi..dimanche] (ou sans échéance)
+        if (!due) return true;
+        return due >= wStart && due <= wEnd;
+      }
+      if (mode === 'overdue') {
+        // Retards : semaines PRÉCÉDENTES non faites
+        return due && due < wStart;
+      }
+      if (mode === 'planned') {
+        // Planifié : semaines futures
+        return due && due > wEnd;
+      }
+      return true;
+    }
+
+    // Mode quotidien (espaces non hebdo — inchangé)
     if (mode === 'overdue') {
       return due && due < today;
     }
@@ -2033,18 +2116,26 @@ function filterTasksByTiming(taskList, timingMode) {
 // (sur la base filtrée par projet, pour cohérence avec la barre de chips)
 function getTimingCounts() {
   const baseTasks = filterTasksByProject(tasks);
-  return {
+  const counts = {
     all: baseTasks.length,
     overdue: filterTasksByTiming(baseTasks, 'overdue').length,
-    today: filterTasksByTiming(baseTasks, 'today').length,
     planned: filterTasksByTiming(baseTasks, 'planned').length,
     blocked: filterTasksByTiming(baseTasks, 'blocked').length  // ★ v3.10.7
   };
+  if (spaceIsWeekly(currentSpace)) {
+    counts.week = filterTasksByTiming(baseTasks, 'week').length;  // ★ v3.16
+  } else {
+    counts.today = filterTasksByTiming(baseTasks, 'today').length;
+  }
+  return counts;
 }
 
 // Activer un filtre timing (ne re-render que ce qui dépend)
 function setTimingFilter(mode) {
-  if (!['all','overdue','today','planned','blocked'].includes(mode)) mode = 'all';
+  if (!['all','week','overdue','today','planned','blocked'].includes(mode)) mode = 'all';
+  // ★ v3.16 — Cohérence par espace : 'today' n'existe pas en hebdo, 'week' n'existe qu'en hebdo
+  if (spaceIsWeekly(currentSpace) && mode === 'today') mode = 'week';
+  if (!spaceIsWeekly(currentSpace) && mode === 'week') mode = 'all';
   currentTimingFilter = mode;
   saveTimingFilter();
   renderTimingTabs();
@@ -2059,12 +2150,19 @@ function renderTimingTabs() {
 
   const c = getTimingCounts();
 
-  const tabs = [
+  // ★ v3.16 — Onglets selon le mode de l'espace
+  const tabs = spaceIsWeekly(currentSpace) ? [
+    { id: 'all',      cls: 't-all',      icon: '🔵', label: 'Tout',     count: c.all },
+    { id: 'week',     cls: 't-jour',     icon: '🗓', label: 'Semaine',  count: c.week },
+    { id: 'overdue',  cls: 't-retards',  icon: '⚠️', label: 'Retards',  count: c.overdue },
+    { id: 'planned',  cls: 't-planifie', icon: '📅', label: 'Planifié', count: c.planned },
+    { id: 'blocked',  cls: 't-bloquees', icon: '🚧', label: 'Bloquées', count: c.blocked }
+  ] : [
     { id: 'all',      cls: 't-all',      icon: '🔵', label: 'Tout',     count: c.all },
     { id: 'overdue',  cls: 't-retards',  icon: '⚠️', label: 'Retards',  count: c.overdue },
     { id: 'today',    cls: 't-jour',     icon: '🎯', label: 'Du jour',  count: c.today },
     { id: 'planned',  cls: 't-planifie', icon: '📅', label: 'Planifié', count: c.planned },
-    { id: 'blocked',  cls: 't-bloquees', icon: '🚧', label: 'Bloquées', count: c.blocked }  // ★ v3.10.7
+    { id: 'blocked',  cls: 't-bloquees', icon: '🚧', label: 'Bloquées', count: c.blocked }
   ];
 
   container.innerHTML = tabs.map(t => {
@@ -2651,13 +2749,43 @@ function updateSpaceIndicator() {
 
 /**
  * ★ v3.11 — Adapte l'interface selon l'espace courant.
- * Pour l'instant : le champ « Assigné à » n'apparaît que dans les espaces
- * qui ont des membres (compta en test). Ailleurs il reste masqué.
+ * ★ v3.16 — Étendu : entreprise (masquée en tech), bandeau semaine (tech).
  */
 function applySpaceUIRules() {
   const assigneeGroup = document.getElementById('assigneeGroup');
   if (assigneeGroup) {
     assigneeGroup.style.display = spaceHasAssignment(currentSpace) ? '' : 'none';
+  }
+  // ★ v3.16 — Champ Entreprise : visible seulement dans les espaces qui l'utilisent
+  const showCompany = spaceHasCompany(currentSpace);
+  const companyGroup = document.getElementById('companyGroup');
+  if (companyGroup) companyGroup.style.display = showCompany ? '' : 'none';
+  const editCompanyGroup = document.getElementById('editCompanyGroup');
+  if (editCompanyGroup) editCompanyGroup.style.display = showCompany ? '' : 'none';
+  const searchCompanyItem = document.getElementById('searchCompanyItem');
+  if (searchCompanyItem) searchCompanyItem.style.display = showCompany ? '' : 'none';
+  // ★ v3.16 — Bandeau semaine (mode hebdo)
+  const weekBanner = document.getElementById('weekBanner');
+  if (weekBanner) {
+    if (spaceIsWeekly(currentSpace)) {
+      weekBanner.style.display = '';
+      weekBanner.textContent = '📅 ' + weekLabel(todayIso());
+    } else {
+      weekBanner.style.display = 'none';
+    }
+  }
+  // ★ v3.16 — Champ échéance : défaut selon le mode de l'espace
+  const fDue = document.getElementById('fDueDate');
+  if (fDue && !fDue.value) fDue.value = defaultDueIso();
+  // ★ v3.16 — Corriger un filtre timing incohérent avec l'espace
+  // (ex : 'today' mémorisé mais on entre en tech où l'onglet n'existe plus)
+  if (spaceIsWeekly(currentSpace) && currentTimingFilter === 'today') {
+    currentTimingFilter = 'week';
+    saveTimingFilter();
+  }
+  if (!spaceIsWeekly(currentSpace) && currentTimingFilter === 'week') {
+    currentTimingFilter = 'all';
+    saveTimingFilter();
   }
 }
 
@@ -2795,7 +2923,7 @@ async function addTask() {
 
   // ★ v3.7 — Échéance : par défaut aujourd'hui si vide
   let dueDate = document.getElementById('fDueDate').value.trim();
-  if (!dueDate) dueDate = todayIso();
+  if (!dueDate) dueDate = defaultDueIso();  // ★ v3.16 : dimanche en mode hebdo
 
   // ★ v3.11 — Entreprise (tous espaces) + assignation (compta only)
   const company = document.getElementById('fCompany') ? document.getElementById('fCompany').value : '';
@@ -2842,7 +2970,7 @@ async function addTask() {
   document.getElementById('fText').value = '';
   document.getElementById('fProject').value = '';
   // ★ v3.7 — On reset le champ date à aujourd'hui après ajout
-  document.getElementById('fDueDate').value = todayIso();
+  document.getElementById('fDueDate').value = defaultDueIso();  // ★ v3.16
   // ★ v3.11 — Reset entreprise + assignation
   if (document.getElementById('fCompany')) document.getElementById('fCompany').value = '';
   if (document.getElementById('fAssignee')) document.getElementById('fAssignee').value = '';
@@ -2852,7 +2980,18 @@ async function addTask() {
 
   // Toast contextuel selon l'échéance
   const today = todayIso();
-  if (dueDate === today) {
+  if (spaceIsWeekly(currentSpace)) {
+    // ★ v3.16 — Mode hebdo : le repère est la semaine, pas le jour
+    const wEnd = weekEndIso(today);
+    const wStart = weekStartIso(today);
+    if (dueDate >= wStart && dueDate <= wEnd) {
+      toast('✓ Tâche ajoutée pour cette semaine');
+    } else if (dueDate > wEnd) {
+      toast(`✓ Tâche planifiée (semaine du ${formatDateFr(weekStartIso(dueDate))})`);
+    } else {
+      toast('✓ Tâche ajoutée (semaine passée — apparaîtra EN RETARD)');
+    }
+  } else if (dueDate === today) {
     toast('✓ Tâche ajoutée pour aujourd\'hui');
   } else if (dueDate > today) {
     toast(`✓ Tâche anticipée (échéance ${formatDateFr(dueDate)})`);
@@ -4600,7 +4739,24 @@ function renderSuivi() {
         // ★ v3.7.1 — Normaliser pour éviter les timestamps corrompus
         const dueNormalized = normalizeDateForInput(t.dueDate);
         const today = todayIso();
-        if (dueNormalized < today) {
+        if (spaceIsWeekly(currentSpace)) {
+          // ★ v3.16 — MODE HEBDO : les badges parlent en semaines
+          const wStart = weekStartIso(today);
+          const wEnd = weekEndIso(today);
+          if (dueNormalized < wStart) {
+            const weeksLate = Math.max(1, Math.round(daysDiff(weekStartIso(dueNormalized), wStart) / 7));
+            dueBadge = `<span class="due-badge overdue" title="Échéance ${formatDateFr(dueNormalized)}">⚠️ RETARD ${weeksLate} sem.</span>`;
+          } else if (dueNormalized > wEnd) {
+            dueBadge = `<span class="due-badge future" title="Échéance ${formatDateFr(dueNormalized)}">📅 sem. du ${formatDateFr(weekStartIso(dueNormalized)).slice(0,5)}</span>`;
+          } else if (dueNormalized !== wEnd) {
+            // Date fixe DANS la semaine (réunion, livrable) ≠ défaut dimanche → on l'affiche
+            const JOURS = ['dim.','lun.','mar.','mer.','jeu.','ven.','sam.'];
+            const dd = new Date(dueNormalized + 'T00:00:00');
+            const passed = dueNormalized < today;
+            dueBadge = `<span class="due-badge ${passed ? 'overdue' : 'future'}" title="Échéance fixe ${formatDateFr(dueNormalized)}">${passed ? '⚠️' : '🎯'} ${JOURS[dd.getDay()]} ${dd.getDate()}</span>`;
+          }
+          // due = dimanche de la semaine courante (le défaut) → aucun badge, c'est la norme
+        } else if (dueNormalized < today) {
           const days = daysDiff(dueNormalized, today);
           dueBadge = `<span class="due-badge overdue" title="Échéance ${formatDateFr(dueNormalized)}">⚠️ EN RETARD ${days}j</span>`;
         } else if (dueNormalized > today) {
@@ -4678,6 +4834,108 @@ function renderSuivi() {
     card.appendChild(body);
     c.appendChild(card);
   });
+
+  // ★ v3.16 — Mode hebdo : rafraîchir le volet « Fait cette semaine »
+  renderWeekArchive();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ★ v3.16 — VOLET « FAIT CETTE SEMAINE » (mode hebdo)
+//  Alimente l'archive au fil de l'eau : les done/cancelled du jour
+//  (encore actives) + celles archivées par les clôtures quotidiennes
+//  des jours précédents de la semaine (via les snapshots).
+// ═══════════════════════════════════════════════════════════════
+
+let weekArchiveOpen = true;
+try {
+  const saved = localStorage.getItem('siyo_week_archive_open');
+  if (saved !== null) weekArchiveOpen = (saved === '1');
+} catch(e) {}
+
+function toggleWeekArchive() {
+  weekArchiveOpen = !weekArchiveOpen;
+  try { localStorage.setItem('siyo_week_archive_open', weekArchiveOpen ? '1' : '0'); } catch(e) {}
+  renderWeekArchive();
+}
+
+function renderWeekArchive() {
+  const card = document.getElementById('weekArchiveCard');
+  const bodyEl = document.getElementById('weekArchiveBody');
+  const countEl = document.getElementById('weekArchiveCount');
+  const chevron = document.getElementById('weekArchiveChevron');
+  if (!card || !bodyEl) return;
+
+  // Visible uniquement en mode hebdo
+  if (!spaceIsWeekly(currentSpace)) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+
+  const today = todayIso();
+  const wStart = weekStartIso(today);
+
+  // 1) Tâches done/cancelled ENCORE ACTIVES (faites aujourd'hui, pas clôturées)
+  const doneByDay = {};  // iso → [tâches]
+  tasks.forEach(t => {
+    if (t.status === 'done' || t.status === 'cancelled') {
+      if (!doneByDay[today]) doneByDay[today] = [];
+      doneByDay[today].push({ text: t.text, project: t.project, status: t.status });
+    }
+  });
+
+  // 2) Tâches done/cancelled des SNAPSHOTS de la semaine (lundi → hier)
+  reports.forEach(r => {
+    const rd = parseReportDate(r.date);
+    if (!rd) return;
+    const rIso = isoFromLocalDate(rd);
+    if (rIso < wStart || rIso >= today) return;  // seulement la semaine courante, avant aujourd'hui
+    (r.tasks || []).forEach(t => {
+      if (t.status === 'done' || t.status === 'cancelled') {
+        if (!doneByDay[rIso]) doneByDay[rIso] = [];
+        doneByDay[rIso].push({ text: t.text, project: t.project, status: t.status });
+      }
+    });
+  });
+
+  const days = Object.keys(doneByDay).sort().reverse();  // plus récent en haut
+  const total = days.reduce((s, d) => s + doneByDay[d].length, 0);
+
+  if (countEl) countEl.textContent = total > 0 ? `(${total})` : '';
+  if (chevron) chevron.textContent = weekArchiveOpen ? '▼' : '▶';
+
+  if (!weekArchiveOpen) {
+    bodyEl.innerHTML = '';
+    bodyEl.style.display = 'none';
+    return;
+  }
+  bodyEl.style.display = '';
+
+  if (total === 0) {
+    bodyEl.innerHTML = '<div class="empty" style="padding:20px"><div class="icon">🗂</div><p>Rien encore cette semaine — les tâches validées apparaîtront ici au fil de l\'eau</p></div>';
+    return;
+  }
+
+  const JOURS_LONGS = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+  const MOIS_COURTS = ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
+  let html = '';
+  days.forEach(dIso => {
+    const d = new Date(dIso + 'T00:00:00');
+    const label = (dIso === today) ? 'Aujourd\'hui' : `${JOURS_LONGS[d.getDay()]} ${d.getDate()} ${MOIS_COURTS[d.getMonth()]}`;
+    html += `<div style="padding:8px 16px;background:var(--bg);font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px">${label} · ${doneByDay[dIso].length} tâche${doneByDay[dIso].length > 1 ? 's' : ''}</div>`;
+    doneByDay[dIso].forEach(t => {
+      const icon = t.status === 'done' ? '✅' : '❌';
+      const style = t.status === 'done' ? '' : 'font-style:italic;color:var(--cancelled)';
+      html += `
+        <div style="display:flex;align-items:baseline;gap:8px;padding:7px 16px;border-bottom:1px solid var(--border)">
+          <span>${icon}</span>
+          <span style="flex:1;font-size:14px;${style};text-decoration:line-through;color:var(--text-muted)">${esc(t.text)}</span>
+          <span style="font-size:12px;color:var(--text-muted);flex-shrink:0">${esc(t.project || 'Sans projet')}</span>
+        </div>`;
+    });
+  });
+
+  bodyEl.innerHTML = html;
 }
 
 // ══════════════════════════════════════
@@ -4955,7 +5213,7 @@ function renderSearchResults() {
           <tr>
             <th>Intitulé</th>
             <th>Projet</th>
-            <th>Entreprise</th>
+            ${spaceHasCompany(currentSpace) ? '<th>Entreprise</th>' : ''}
             ${spaceHasAssignment(currentSpace) ? '<th>Assigné</th>' : ''}
             <th>Statut</th>
             <th>Échéance</th>
@@ -4969,7 +5227,7 @@ function renderSearchResults() {
       <tr>
         <td style="font-weight:500">${esc(t.text)}</td>
         <td>${esc(t.project || 'Sans projet')}</td>
-        <td>${t.company ? esc(t.company) : '<span style="color:var(--text-muted)">—</span>'}</td>
+        ${spaceHasCompany(currentSpace) ? `<td>${t.company ? esc(t.company) : '<span style="color:var(--text-muted)">—</span>'}</td>` : ''}
         ${spaceHasAssignment(currentSpace) ? `<td>${t.assignee ? esc(t.assignee) : '<span style="color:var(--text-muted)">—</span>'}</td>` : ''}
         <td><span class="st-status ${sm.cls}">${sm.txt}</span></td>
         <td style="white-space:nowrap;font-family:'JetBrains Mono',monospace;font-size:13px">${fmtDue(t.dueDate)}</td>
@@ -5089,24 +5347,37 @@ function exportSearchPDF() {
     return dd + '/' + mm + '/' + yy;
   };
 
-  const head = hasAssign
-    ? [['Intitulé', 'Projet', 'Entreprise', 'Assigné', 'Statut', 'Échéance']]
-    : [['Intitulé', 'Projet', 'Entreprise', 'Statut', 'Échéance']];
+  // ★ v3.16 — Colonnes dynamiques selon l'espace (entreprise/assignation)
+  const hasComp = spaceHasCompany(currentSpace);
+  const headCols = ['Intitulé', 'Projet'];
+  if (hasComp) headCols.push('Entreprise');
+  if (hasAssign) headCols.push('Assigné');
+  headCols.push('Statut', 'Échéance');
+  const head = [headCols];
 
   const body = results.map(t => {
     const stTxt = STATUS_TXT[t.status] || t.status;
     const base = [
       t.text || '',
-      t.project || 'Sans projet',
-      t.company || '—'
+      t.project || 'Sans projet'
     ];
+    if (hasComp) base.push(t.company || '—');
     if (hasAssign) base.push(t.assignee || '—');
     base.push(stTxt);
     base.push(fmtDue(t.dueDate));
     return base;
   });
 
-  const statusColIdx = hasAssign ? 4 : 3;
+  const statusColIdx = headCols.indexOf('Statut');
+
+  // Largeurs : l'intitulé prend l'espace restant, les autres sont fixes
+  const colStyles = { 0: { cellWidth: 'auto', fontStyle: 'bold' } };
+  let ci = 1;
+  colStyles[ci++] = { cellWidth: hasComp || hasAssign ? 28 : 35 };  // Projet
+  if (hasComp) colStyles[ci++] = { cellWidth: 24 };
+  if (hasAssign) colStyles[ci++] = { cellWidth: 20 };
+  colStyles[ci++] = { cellWidth: 18, halign: 'center' };  // Statut
+  colStyles[ci++] = { cellWidth: 20, halign: 'center' };  // Échéance
 
   doc.autoTable({
     startY: y,
@@ -5123,20 +5394,7 @@ function exportSearchPDF() {
     },
     bodyStyles: { fontSize: 8.5, cellPadding: 2.2, textColor: PDF_COLORS.text },
     alternateRowStyles: { fillColor: PDF_COLORS.bg },
-    columnStyles: hasAssign ? {
-      0: { cellWidth: 'auto', fontStyle: 'bold' },
-      1: { cellWidth: 28 },
-      2: { cellWidth: 24 },
-      3: { cellWidth: 20 },
-      4: { cellWidth: 18, halign: 'center' },
-      5: { cellWidth: 20, halign: 'center' }
-    } : {
-      0: { cellWidth: 'auto', fontStyle: 'bold' },
-      1: { cellWidth: 35 },
-      2: { cellWidth: 28 },
-      3: { cellWidth: 20, halign: 'center' },
-      4: { cellWidth: 22, halign: 'center' }
-    },
+    columnStyles: colStyles,
     didParseCell: function(data) {
       // Colorer la cellule statut
       if (data.section === 'body' && data.column.index === statusColIdx) {
@@ -5427,9 +5685,113 @@ function trendBar(percent, color, label, sublabel) {
 }
 
 // ── VUE 1 : Performance par mois ──
+// ★ v3.16 — Performance par SEMAINE (mode hebdo).
+// Pour chaque semaine : tâches uniques vues dans les snapshots de la semaine
+// (statut = dernière version vue dans la semaine) + les tâches actives pour
+// la semaine en cours. Formule identique au reste : done / (total − ann. − bloq.)
+function renderTrendsWeekly(container) {
+  const today = todayIso();
+  const currentWeekStart = weekStartIso(today);
+
+  // Grouper les snapshots par semaine, en dédupliquant par tâche AU SEIN de chaque semaine
+  const weeks = {};  // weekStartIso → Map(taskKey → {status, when})
+  function taskKey(t) {
+    if (t.originalId) return 'oid:' + String(t.originalId);
+    return 'sig:' + normalizeStr(t.text || '') + '|' + normalizeStr(t.project || 'Sans projet');
+  }
+  reports.forEach(r => {
+    const rd = parseReportDate(r.date);
+    if (!rd) return;
+    const rIso = isoFromLocalDate(rd);
+    const wk = weekStartIso(rIso);
+    if (!weeks[wk]) weeks[wk] = new Map();
+    (r.tasks || []).forEach(t => {
+      const key = taskKey(t);
+      const existing = weeks[wk].get(key);
+      // La version la plus tardive de la semaine gagne (rIso croissant suffit)
+      if (!existing || rIso >= existing.when) {
+        weeks[wk].set(key, { status: t.status || 'pending', when: rIso });
+      }
+    });
+  });
+
+  // Semaine en cours : ajouter/écraser avec les tâches ACTIVES (état le plus frais)
+  if (!weeks[currentWeekStart]) weeks[currentWeekStart] = new Map();
+  tasks.forEach(t => {
+    weeks[currentWeekStart].set(taskKey(t), { status: t.status || 'pending', when: today });
+  });
+
+  const weekKeys = Object.keys(weeks).sort().slice(-10);  // 10 dernières semaines
+  if (weekKeys.length === 0) {
+    container.innerHTML = '<div class="empty"><div class="icon">📈</div><p>Données en cours d\'accumulation</p></div>';
+    return;
+  }
+
+  const rows = weekKeys.map(wk => {
+    let created = 0, done = 0, cancelled = 0, blocked = 0;
+    weeks[wk].forEach(v => {
+      created++;
+      if (v.status === 'done') done++;
+      else if (v.status === 'cancelled') cancelled++;
+      else if (v.status === 'blocked') blocked++;
+    });
+    const base = created - cancelled - blocked;
+    const perf = base > 0 ? Math.round((done / base) * 100) : 0;
+    const s = new Date(wk + 'T00:00:00');
+    const e = new Date(weekEndIso(wk) + 'T00:00:00');
+    const label = `${String(s.getDate()).padStart(2,'0')}/${String(s.getMonth()+1).padStart(2,'0')} → ${String(e.getDate()).padStart(2,'0')}/${String(e.getMonth()+1).padStart(2,'0')}`;
+    return { wk, label, perf, created, done, isCurrent: wk === currentWeekStart };
+  });
+
+  // Chiffres-clés : semaine en cours + moyenne des semaines terminées
+  const finished = rows.filter(r => !r.isCurrent && r.created >= 3);
+  const current = rows.find(r => r.isCurrent);
+  let kpiHtml = '';
+  if (current || finished.length > 0) {
+    const avg = finished.length > 0 ? Math.round(finished.reduce((s, r) => s + r.perf, 0) / finished.length) : null;
+    kpiHtml = '<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">';
+    if (current) {
+      kpiHtml += `
+        <div style="flex:1;min-width:130px;background:rgba(25,118,210,0.08);border-radius:8px;padding:10px 12px">
+          <div style="font-size:12px;color:var(--text-muted);font-weight:600">SEMAINE EN COURS</div>
+          <div style="font-size:18px;font-weight:700;color:var(--accent-light)">${current.perf}%</div>
+          <div style="font-size:12px;color:var(--text-mid)">${current.done}/${current.created} tâches</div>
+        </div>`;
+    }
+    if (avg !== null) {
+      kpiHtml += `
+        <div style="flex:1;min-width:130px;background:var(--bg);border-radius:8px;padding:10px 12px">
+          <div style="font-size:12px;color:var(--text-muted);font-weight:600">MOYENNE (sem. terminées)</div>
+          <div style="font-size:18px;font-weight:700;color:var(--text)">${avg}%</div>
+          <div style="font-size:12px;color:var(--text-mid)">${finished.length} semaine${finished.length > 1 ? 's' : ''}</div>
+        </div>`;
+    }
+    kpiHtml += '</div>';
+  }
+
+  let barsHtml = '';
+  rows.forEach(r => {
+    const color = r.perf >= 80 ? 'var(--success)' : r.perf >= 50 ? '#b8860b' : 'var(--overdue)';
+    const cur = r.isCurrent ? ' <span style="color:var(--accent-light);font-weight:700">(en cours)</span>' : '';
+    const note = r.created < 3 ? ' <span style="color:var(--text-muted);font-style:italic">(peu de données)</span>' : '';
+    barsHtml += trendBar(r.perf, color, r.label, `${r.perf}% · ${r.done}/${r.created} tâches${cur}${note}`);
+  });
+
+  container.innerHTML = kpiHtml + barsHtml;
+}
+
 function renderTrendsMonthly() {
   const container = document.getElementById('trendsMonthly');
   if (!container) return;
+
+  // ★ v3.16 — Mode hebdo (tech) : performance par SEMAINE, pas par mois
+  const titleEl = document.getElementById('trendsMonthlyTitle');
+  if (spaceIsWeekly(currentSpace)) {
+    if (titleEl) titleEl.textContent = '📈 Performance par semaine';
+    renderTrendsWeekly(container);
+    return;
+  }
+  if (titleEl) titleEl.textContent = '📈 Performance par mois';
 
   const all = getAllTasksDeduplicated();
 
