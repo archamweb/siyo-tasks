@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.14</title>
+<title>SIYO — Gestionnaire de Tâches v3.15</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1596,6 +1596,7 @@
         </div>
         <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary" style="font-size:13px;padding:7px 14px" onclick="exportSearchPDF()">📄 Exporter en PDF</button>
+          <button class="btn btn-outline" style="font-size:13px;padding:7px 14px" onclick="exportDiagnosticJSON()" title="Export complet de l'espace courant pour analyse / diagnostic">🧾 Export JSON (diagnostic)</button>
           <button class="btn btn-outline" style="font-size:13px;padding:6px 12px" onclick="resetSearchFilters()">↺ Réinitialiser les filtres</button>
         </div>
       </div>
@@ -1836,7 +1837,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.14 (tendances)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.15 (tendances + export diagnostic)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -5158,6 +5159,51 @@ function exportSearchPDF() {
   doc.save(`SIYO_Recherche_${spaceTag}_${dateForFile}.pdf`);
   toast('✓ PDF généré (' + results.length + ' tâche' + (results.length > 1 ? 's' : '') + ')');
 }
+
+// ★ v3.15 — Export JSON complet de l'espace courant (outil de diagnostic /
+// amélioration continue). Contenu : tâches actives + tous les reports avec
+// leurs snapshots + métadonnées. À exporter depuis chaque espace pour un
+// diagnostic global (3 espaces = 3 fichiers).
+function exportDiagnosticJSON() {
+  try {
+    const payload = {
+      meta: {
+        app: 'SIYO Task Manager',
+        version: 'v3.15',
+        space: currentSpace,
+        spaceLabel: (SPACE_LABELS[currentSpace] ? SPACE_LABELS[currentSpace].full : ''),
+        exportedAt: new Date().toISOString(),
+        counts: {
+          activeTasks: tasks.length,
+          reports: reports.length
+        }
+      },
+      // Tâches actives (état vivant de l'espace)
+      activeTasks: tasks,
+      // Historique complet : reports quotidiens avec leurs snapshots de tâches
+      reports: reports
+    };
+
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    const dateForFile = todayIso().replace(/-/g, '');
+    a.href = url;
+    a.download = `SIYO_diagnostic_${currentSpace || 'espace'}_${dateForFile}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    toast('✓ Export JSON généré (' + tasks.length + ' tâches actives, ' + reports.length + ' reports)');
+  } catch (e) {
+    console.error('[exportDiagnosticJSON]', e);
+    toast('❌ Erreur lors de l\'export JSON');
+  }
+}
+
 /**
  * ★ v3.8.1 — Calcul des statistiques par projet (refonte renforcée).
  *
