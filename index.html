@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.16</title>
+<title>SIYO — Gestionnaire de Tâches v3.17</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -272,6 +272,22 @@
   .meta-badge { display:inline-flex; align-items:center; gap:3px; font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px; letter-spacing:0.2px; }
   .meta-badge.company { background:rgba(15,52,96,0.08); color:#0f3460; }
   .meta-badge.assignee { background:rgba(106,76,147,0.10); color:#6a4c93; }
+
+  /* ★ v3.17 — Badge numéro de projet (cartographie personnelle) */
+  .proj-num {
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:30px; padding:2px 7px; border-radius:8px;
+    font-size:12px; font-weight:800; letter-spacing:0.3px;
+    background:var(--primary); color:#fff; cursor:pointer;
+    flex-shrink:0; transition:opacity 0.15s;
+  }
+  .proj-num:hover { opacity:0.85; }
+  .proj-num.empty {
+    background:transparent; color:var(--text-muted);
+    border:1px dashed var(--border); font-weight:600;
+    opacity:0.45;
+  }
+  .proj-num.empty:hover { opacity:1; color:var(--primary); border-color:var(--primary); }
 
   /* ★ v3.12 — Vue Recherche (historique filtrable) */
   .search-filters {
@@ -808,6 +824,8 @@
   .pf-search-item .pin-btn:hover { background: var(--accent-light-soft); color: var(--accent); }
   .pf-search-item .pin-btn.pinned { color: var(--accent); }
   .pf-search-empty { padding: 14px; text-align: center; color: var(--text-muted); font-size: 13px; font-style: italic; }
+  /* ★ v3.17 — En-têtes de sections du dropdown (Projets / Tâches) */
+  .pf-search-section { padding: 8px 14px 5px; font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; background: var(--bg); border-bottom: 1px solid var(--border); }
 
   .pf-chips {
     display: flex;
@@ -1430,7 +1448,7 @@
   <div class="project-filter-bar" id="projectFilterBar">
     <div class="pf-search">
       <span class="pf-search-icon">🔍</span>
-      <input type="text" id="projectSearchInput" placeholder="Rechercher un projet..." autocomplete="off"
+      <input type="text" id="projectSearchInput" placeholder="Rechercher un projet ou une tâche..." autocomplete="off"
         oninput="onProjectSearchInput()" onfocus="onProjectSearchInput()" onblur="setTimeout(hideProjectSearchResults, 180)">
       <button class="pf-search-clear" id="pfSearchClear" onclick="clearProjectSearch()" style="display:none">✕</button>
       <div class="pf-search-results" id="pfSearchResults"></div>
@@ -1850,7 +1868,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.16 (mode hebdomadaire tech)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.17 (recherche tâches + cartographie projets)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -1973,6 +1991,62 @@ function weekLabel(iso) {
 }
 
 let currentSpace = null;  // sera défini par chooseSpace() au démarrage
+
+// ★ v3.17 — Numéros de projets (cartographie personnelle, stockés backend)
+let projectNumbers = {};  // { "NomProjet": numero }
+
+function projectNumber(project) {
+  const n = projectNumbers[project];
+  return (typeof n === 'number' && n > 0) ? n : null;
+}
+
+// Comparateur : projets numérotés d'abord (numéro croissant), puis les autres (ordre alpha)
+function compareProjects(a, b) {
+  const na = projectNumber(a), nb = projectNumber(b);
+  if (na !== null && nb !== null) return na - nb;
+  if (na !== null) return -1;
+  if (nb !== null) return 1;
+  return a.localeCompare(b, 'fr', { sensitivity: 'base' });
+}
+
+// Attribution / modification du numéro d'un projet (unicité vérifiée)
+async function setProjectNumber(project) {
+  const current = projectNumber(project);
+  const input = prompt(
+    `Numéro pour « ${project} »\n(vide pour retirer le numéro)`,
+    current !== null ? String(current) : ''
+  );
+  if (input === null) return;  // annulé
+  const trimmed = input.trim();
+
+  const newNumbers = Object.assign({}, projectNumbers);
+  if (trimmed === '') {
+    delete newNumbers[project];
+  } else {
+    const n = parseInt(trimmed);
+    if (isNaN(n) || n < 1) {
+      toast('⚠ Numéro invalide (entier positif attendu)');
+      return;
+    }
+    // Unicité côté client (le backend re-vérifie aussi)
+    for (const p in newNumbers) {
+      if (p !== project && newNumbers[p] === n) {
+        toast(`⚠ Le numéro ${n} est déjà pris par « ${p} »`);
+        return;
+      }
+    }
+    newNumbers[project] = n;
+  }
+
+  const r = await apiCall('setProjectNumbers', { numbers: newNumbers });
+  if (r.ok && r.data && r.data.status === 'ok') {
+    projectNumbers = r.data.projectNumbers || newNumbers;
+    renderSuivi();
+    toast(trimmed === '' ? '✓ Numéro retiré' : `✓ « ${project} » → №${trimmed}`);
+  } else {
+    toast('❌ ' + ((r.data && r.data.message) || 'Erreur de sauvegarde'));
+  }
+}
 
 // Charger l'espace mémorisé (si déjà choisi avant)
 try {
@@ -2242,14 +2316,16 @@ function renderProjectChips() {
   </button>`;
 
   // Chips épinglés (filtrer ceux qui existent encore)
-  const validPinned = pinnedProjects.filter(p => countsByName[p]);
+  // ★ v3.17 — triés selon la cartographie (numéros de projets)
+  const validPinned = pinnedProjects.filter(p => countsByName[p]).sort(compareProjects);
   validPinned.forEach(p => {
     const c = countsByName[p];
     const color = projectColor(p);
     const isActive = currentProjectFilter === p;
+    const pn = projectNumber(p);
     html += `<button class="pf-chip ${isActive ? 'active' : ''}" onclick="setProjectFilter('${escAttr(p)}')" title="${escAttr(p)}">
       <span class="chip-dot" style="background:${color}"></span>
-      <span>${esc(p)}</span>
+      <span>${pn !== null ? '<b>№' + pn + '</b> ' : ''}${esc(p)}</span>
       <span class="chip-count">${c.active}</span>
     </button>`;
   });
@@ -2326,22 +2402,50 @@ function renderProjectSearchResults() {
   const qNorm = normalizeStr(q);
   const filtered = counts.filter(c => normalizeStr(c.name).includes(qNorm));
 
-  if (filtered.length === 0) {
-    results.innerHTML = '<div class="pf-search-empty">Aucun projet ne correspond à "' + esc(q) + '"</div>';
+  // ★ v3.17 — Recherche AUSSI dans les intitulés des tâches ACTIVES
+  // Cas d'usage : « je sais que j'ai un approvisionnement quelque part,
+  // je ne sais plus sur quel projet »
+  const matchedTasks = tasks.filter(t => normalizeStr(t.text || '').includes(qNorm));
+
+  if (filtered.length === 0 && matchedTasks.length === 0) {
+    results.innerHTML = '<div class="pf-search-empty">Aucun projet ni tâche ne correspond à "' + esc(q) + '"</div>';
     results.classList.add('show');
     return;
   }
 
-  results.innerHTML = filtered.slice(0, 12).map(c => {
-    const isPinned = pinnedProjects.includes(c.name);
-    const color = projectColor(c.name);
-    return `<div class="pf-search-item" onclick="setProjectFilter('${escAttr(c.name)}'); clearProjectSearch();">
-      <span class="chip-dot" style="background:${color};width:9px;height:9px;border-radius:50%"></span>
-      <span class="name">${esc(c.name)}</span>
-      <span class="count">${c.active}/${c.total}</span>
-      <button class="pin-btn ${isPinned ? 'pinned' : ''}" onclick="event.stopPropagation(); toggleProjectPin('${escAttr(c.name)}')" title="${isPinned ? 'Désépingler' : 'Épingler'}">📌</button>
-    </div>`;
-  }).join('');
+  let html = '';
+
+  if (filtered.length > 0) {
+    html += '<div class="pf-search-section">📁 Projets</div>';
+    html += filtered.slice(0, 8).map(c => {
+      const isPinned = pinnedProjects.includes(c.name);
+      const color = projectColor(c.name);
+      const pn = projectNumber(c.name);
+      return `<div class="pf-search-item" onclick="setProjectFilter('${escAttr(c.name)}'); clearProjectSearch();">
+        <span class="chip-dot" style="background:${color};width:9px;height:9px;border-radius:50%"></span>
+        <span class="name">${pn !== null ? '<b>№' + pn + '</b> ' : ''}${esc(c.name)}</span>
+        <span class="count">${c.active}/${c.total}</span>
+        <button class="pin-btn ${isPinned ? 'pinned' : ''}" onclick="event.stopPropagation(); toggleProjectPin('${escAttr(c.name)}')" title="${isPinned ? 'Désépingler' : 'Épingler'}">📌</button>
+      </div>`;
+    }).join('');
+  }
+
+  if (matchedTasks.length > 0) {
+    const STATUS_ICON = { pending: '🔵', done: '✅', cancelled: '❌', blocked: '🚧' };
+    html += '<div class="pf-search-section">📝 Tâches</div>';
+    html += matchedTasks.slice(0, 10).map(t => {
+      return `<div class="pf-search-item" onclick="clearProjectSearch(); openDetailModal('${escAttr(t.id)}');">
+        <span style="flex-shrink:0">${STATUS_ICON[t.status] || '🔵'}</span>
+        <span class="name">${esc(t.text)}</span>
+        <span class="count" style="max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.project || 'Sans projet')}</span>
+      </div>`;
+    }).join('');
+    if (matchedTasks.length > 10) {
+      html += `<div class="pf-search-empty">… et ${matchedTasks.length - 10} autre${matchedTasks.length - 10 > 1 ? 's' : ''} — affine ta recherche</div>`;
+    }
+  }
+
+  results.innerHTML = html;
   results.classList.add('show');
 }
 
@@ -2377,8 +2481,12 @@ function renderAllProjectsList() {
     filtered = counts.filter(c => normalizeStr(c.name).includes(qNorm));
   }
 
-  // Trier : épinglés d'abord, puis par activité
+  // Trier : ★ v3.17 numérotés d'abord (cartographie), puis épinglés, puis par activité
   filtered.sort((a, b) => {
+    const na = projectNumber(a.name), nb = projectNumber(b.name);
+    if (na !== null && nb !== null) return na - nb;
+    if (na !== null) return -1;
+    if (nb !== null) return 1;
     const aPinned = pinnedProjects.includes(a.name) ? 0 : 1;
     const bPinned = pinnedProjects.includes(b.name) ? 0 : 1;
     if (aPinned !== bPinned) return aPinned - bPinned;
@@ -2631,6 +2739,7 @@ async function loadAll() {
     tasks = r.data.tasks || [];
     reports = r.data.reports || [];
     config = r.data.config || {};
+    projectNumbers = r.data.projectNumbers || {};  // ★ v3.17
     serverToday = r.data.serverToday || '';
     return true;
   }
@@ -4402,7 +4511,7 @@ function drawPdfAgenda(doc, opts, y, margin, pageWidth, pageHeight) {
     groups[p].push(t);
   });
 
-  const projectsList = Object.keys(groups).sort();
+  const projectsList = Object.keys(groups).sort(compareProjects);  // ★ v3.17
 
   projectsList.forEach(proj => {
     const list = groups[proj];
@@ -4666,7 +4775,7 @@ function renderSuivi() {
   const groups = {};
   tasksToRender.forEach(t=>{ if(!groups[t.project]) groups[t.project]=[]; groups[t.project].push(t); });
 
-  Object.keys(groups).sort().forEach(proj => {
+  Object.keys(groups).sort(compareProjects).forEach(proj => {  // ★ v3.17 : tri par numéro
     const section = groups[proj];
     const done = section.filter(t=>t.status==='done').length;
     const cancelled = section.filter(t=>t.status==='cancelled').length;
@@ -4699,8 +4808,14 @@ function renderSuivi() {
     const blockedTxt = blocked ? ' · <span style="color:var(--blocked);font-weight:700">🚧 '+blocked+'</span>' : '';
     const overdueTxt = overdueProj ? ' · <span style="color:var(--overdue);font-weight:700">⚠️ '+overdueProj+'</span>' : '';
     const futureTxt = futureProj ? ' · <span style="color:var(--future);font-weight:600">📅 '+futureProj+'</span>' : '';
+    // ★ v3.17 — Badge numéro de projet (cartographie personnelle)
+    const pNum = projectNumber(proj);
+    const numBadge = pNum !== null
+      ? `<span class="proj-num" title="Position ${pNum} — clic pour modifier" onclick="event.stopPropagation();setProjectNumber('${esc(proj).replace(/'/g, "\\'")}')">№${pNum}</span>`
+      : `<span class="proj-num empty" title="Attribuer un numéro" onclick="event.stopPropagation();setProjectNumber('${esc(proj).replace(/'/g, "\\'")}')">№</span>`;
     head.innerHTML = `
       <div class="project-dot" style="background:${color};width:10px;height:10px"></div>
+      ${numBadge}
       <span class="section-name">${esc(proj)}</span>
       <span class="section-count">${done}/${total}${cancelled?' · '+cancelled+' ann.':''}${blockedTxt}${overdueTxt}${futureTxt}</span>
       <span class="chevron">▼</span>
