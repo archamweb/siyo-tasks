@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.17</title>
+<title>SIYO — Gestionnaire de Tâches v3.17.1</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1868,7 +1868,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.17 (recherche tâches + cartographie projets)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.17.1 (cartographie : échange de numéros)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -2028,12 +2028,23 @@ async function setProjectNumber(project) {
       toast('⚠ Numéro invalide (entier positif attendu)');
       return;
     }
-    // Unicité côté client (le backend re-vérifie aussi)
+    // ★ v3.17.1 — Si le numéro est déjà pris : proposer l'ÉCHANGE au lieu de refuser
+    // (interversion en un geste, cas fréquent en réorganisant la cartographie)
+    let holder = null;
     for (const p in newNumbers) {
-      if (p !== project && newNumbers[p] === n) {
-        toast(`⚠ Le numéro ${n} est déjà pris par « ${p} »`);
-        return;
-      }
+      if (p !== project && newNumbers[p] === n) { holder = p; break; }
+    }
+    if (holder) {
+      const holderNewTxt = (current !== null)
+        ? `« ${holder} » prend le №${current}`
+        : `« ${holder} » perd son numéro`;
+      const ok = confirm(
+        `Le №${n} est déjà pris par « ${holder} ».\n\n` +
+        `Échanger ?\n→ « ${project} » prend le №${n}\n→ ${holderNewTxt}`
+      );
+      if (!ok) return;
+      if (current !== null) newNumbers[holder] = current;
+      else delete newNumbers[holder];
     }
     newNumbers[project] = n;
   }
