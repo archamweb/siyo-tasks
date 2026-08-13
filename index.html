@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.17.1</title>
+<title>SIYO — Gestionnaire de Tâches v3.18</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.0/jspdf.plugin.autotable.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
 <style>
@@ -289,6 +290,19 @@
   }
   .proj-num.empty:hover { opacity:1; color:var(--primary); border-color:var(--primary); }
 
+  /* ★ v3.18 — Glisser-déposer des sections projet */
+  .drag-handle {
+    display:inline-flex; align-items:center; justify-content:center;
+    width:28px; height:28px; margin-right:2px; flex-shrink:0;
+    font-size:15px; color:var(--text-muted); opacity:0.55;
+    cursor:grab; touch-action:none; user-select:none;
+    border-radius:6px; transition:all 0.15s;
+  }
+  .drag-handle:hover { opacity:1; background:var(--bg); color:var(--primary); }
+  .drag-handle:active { cursor:grabbing; }
+  .suivi-ghost { opacity:0.35; border:2px dashed var(--primary) !important; }
+  .suivi-chosen { box-shadow:0 6px 20px rgba(15,52,96,0.22) !important; }
+
   /* ★ v3.12 — Vue Recherche (historique filtrable) */
   .search-filters {
     display: grid;
@@ -347,6 +361,8 @@
     font-family:'JetBrains Mono',monospace;
   }
   .due-badge.overdue { background:var(--overdue-soft); color:var(--overdue); }
+  /* ★ v3.17.2 — Badge « héritée / à re-trier » : neutre, sans charge morale */
+  .due-badge.retri { background:rgba(100,100,120,0.10); color:var(--text-mid); }
   .due-badge.future { background:var(--future-soft); color:var(--future); }
   .due-badge.today { background:var(--success-soft); color:var(--success); }
   /* ★ v3.7.4 — Badge REPORTÉ extrait en classe pour responsive */
@@ -1868,7 +1884,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.17.1 (cartographie : échange de numéros)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.18 (projets : glisser-déposer)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -2236,12 +2252,14 @@ function renderTimingTabs() {
   const c = getTimingCounts();
 
   // ★ v3.16 — Onglets selon le mode de l'espace
+  // ★ v3.17.2 — En hebdo, « Retards » devient « À re-trier » : le lundi est
+  // un moment de décision (reprendre / replanifier / annuler), pas de culpabilité.
   const tabs = spaceIsWeekly(currentSpace) ? [
-    { id: 'all',      cls: 't-all',      icon: '🔵', label: 'Tout',     count: c.all },
-    { id: 'week',     cls: 't-jour',     icon: '🗓', label: 'Semaine',  count: c.week },
-    { id: 'overdue',  cls: 't-retards',  icon: '⚠️', label: 'Retards',  count: c.overdue },
-    { id: 'planned',  cls: 't-planifie', icon: '📅', label: 'Planifié', count: c.planned },
-    { id: 'blocked',  cls: 't-bloquees', icon: '🚧', label: 'Bloquées', count: c.blocked }
+    { id: 'all',      cls: 't-all',      icon: '🔵', label: 'Tout',       count: c.all },
+    { id: 'week',     cls: 't-jour',     icon: '🗓', label: 'Semaine',    count: c.week },
+    { id: 'overdue',  cls: 't-retards',  icon: '📥', label: 'À re-trier', count: c.overdue },
+    { id: 'planned',  cls: 't-planifie', icon: '📅', label: 'Planifié',   count: c.planned },
+    { id: 'blocked',  cls: 't-bloquees', icon: '🚧', label: 'Bloquées',   count: c.blocked }
   ] : [
     { id: 'all',      cls: 't-all',      icon: '🔵', label: 'Tout',     count: c.all },
     { id: 'overdue',  cls: 't-retards',  icon: '⚠️', label: 'Retards',  count: c.overdue },
@@ -3471,7 +3489,27 @@ function openDetailModal(id) {
     dueStr = d + '/' + m + '/' + y;
     const todayStr_ = todayIso();
     if (t.status === 'pending' || t.status === 'blocked') {
-      if (dueIso < todayStr_) {
+      if (spaceIsWeekly(currentSpace)) {
+        // ★ v3.17.2 — MODE HEBDO : sémantique semaine + distinction héritée / date fixe
+        const wStart = weekStartIso(todayStr_);
+        const wEnd = weekEndIso(todayStr_);
+        if (dueIso < wStart) {
+          const weeksLate = Math.max(1, Math.round((new Date(wStart) - new Date(weekStartIso(dueIso))) / (7 * 86400000)));
+          const wasFixedDate = (new Date(dueIso + 'T00:00:00').getDay() !== 0);
+          dueExtra = wasFixedDate
+            ? ' <span style="color:var(--overdue);font-weight:700">⚠ RETARD (date fixe dépassée)</span>'
+            : ' <span style="color:var(--text-mid);font-weight:600">↩ héritée — à re-trier (' + weeksLate + ' sem.)</span>';
+        } else if (dueIso > wEnd) {
+          dueExtra = ' <span style="color:var(--future);font-weight:600">📅 semaine future</span>';
+        } else if (dueIso !== wEnd) {
+          const passed = dueIso < todayStr_;
+          dueExtra = passed
+            ? ' <span style="color:var(--overdue);font-weight:700">⚠ date fixe dépassée</span>'
+            : ' <span style="color:var(--accent-light);font-weight:600">🎯 date fixe cette semaine</span>';
+        } else {
+          dueExtra = ' <span style="color:var(--accent-light);font-weight:600">🗓 cette semaine</span>';
+        }
+      } else if (dueIso < todayStr_) {
         const days = Math.round((new Date(todayStr_) - new Date(dueIso)) / 86400000);
         dueExtra = ' <span style="color:var(--overdue);font-weight:700">⚠ EN RETARD ' + days + 'j</span>';
       } else if (dueIso > todayStr_) {
@@ -4733,6 +4771,9 @@ function formatDateLong(iso) {
 }
 
 function renderSuivi() {
+  // ★ v3.18 — Ne jamais reconstruire le DOM pendant un glisser-déposer
+  // (le polling 5 min pourrait déclencher un render en plein drag)
+  if (_suiviDragging) return;
   const c = document.getElementById('suiviContainer');
   const autoInfo = document.getElementById('autoClotureInfo');
   c.innerHTML = '';
@@ -4807,8 +4848,9 @@ function renderSuivi() {
     const color = projectColor(proj);
 
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card suivi-section';
     card.style.marginBottom = '10px';
+    card.dataset.project = proj;  // ★ v3.18 : pour le réordonnancement drag-and-drop
 
     // Progress bar
     card.innerHTML = `<div class="section-bar"><div class="section-bar-fill" style="width:${pct}%;background:${color}"></div></div>`;
@@ -4819,12 +4861,14 @@ function renderSuivi() {
     const blockedTxt = blocked ? ' · <span style="color:var(--blocked);font-weight:700">🚧 '+blocked+'</span>' : '';
     const overdueTxt = overdueProj ? ' · <span style="color:var(--overdue);font-weight:700">⚠️ '+overdueProj+'</span>' : '';
     const futureTxt = futureProj ? ' · <span style="color:var(--future);font-weight:600">📅 '+futureProj+'</span>' : '';
-    // ★ v3.17 — Badge numéro de projet (cartographie personnelle)
+    // ★ v3.17 — Badge numéro (position dans la cartographie)
+    // ★ v3.18 — Purement informatif : l'ordre se change par glisser-déposer (poignée ⠿)
     const pNum = projectNumber(proj);
     const numBadge = pNum !== null
-      ? `<span class="proj-num" title="Position ${pNum} — clic pour modifier" onclick="event.stopPropagation();setProjectNumber('${esc(proj).replace(/'/g, "\\'")}')">№${pNum}</span>`
-      : `<span class="proj-num empty" title="Attribuer un numéro" onclick="event.stopPropagation();setProjectNumber('${esc(proj).replace(/'/g, "\\'")}')">№</span>`;
+      ? `<span class="proj-num" title="Position ${pNum} dans ta cartographie">№${pNum}</span>`
+      : '';
     head.innerHTML = `
+      <span class="drag-handle" title="Glisser pour réordonner les projets" onclick="event.stopPropagation()">⠿</span>
       <div class="project-dot" style="background:${color};width:10px;height:10px"></div>
       ${numBadge}
       <span class="section-name">${esc(proj)}</span>
@@ -4871,7 +4915,15 @@ function renderSuivi() {
           const wEnd = weekEndIso(today);
           if (dueNormalized < wStart) {
             const weeksLate = Math.max(1, Math.round(daysDiff(weekStartIso(dueNormalized), wStart) / 7));
-            dueBadge = `<span class="due-badge overdue" title="Échéance ${formatDateFr(dueNormalized)}">⚠️ RETARD ${weeksLate} sem.</span>`;
+            // ★ v3.17.2 — Deux natures de « semaine passée » :
+            // - échéance = dimanche (le défaut) → tâche HÉRITÉE, à re-trier, badge neutre
+            // - échéance ≠ dimanche → DATE FIXE choisie et ratée → vrai retard, badge rouge
+            const wasFixedDate = (new Date(dueNormalized + 'T00:00:00').getDay() !== 0);
+            if (wasFixedDate) {
+              dueBadge = `<span class="due-badge overdue" title="Échéance fixe ${formatDateFr(dueNormalized)} dépassée">⚠️ RETARD (${formatDateFr(dueNormalized).slice(0,5)})</span>`;
+            } else {
+              dueBadge = `<span class="due-badge retri" title="Héritée de la semaine du ${formatDateFr(weekStartIso(dueNormalized))} — à re-trier">↩ ${weeksLate} sem.</span>`;
+            }
           } else if (dueNormalized > wEnd) {
             dueBadge = `<span class="due-badge future" title="Échéance ${formatDateFr(dueNormalized)}">📅 sem. du ${formatDateFr(weekStartIso(dueNormalized)).slice(0,5)}</span>`;
           } else if (dueNormalized !== wEnd) {
@@ -4963,7 +5015,84 @@ function renderSuivi() {
 
   // ★ v3.16 — Mode hebdo : rafraîchir le volet « Fait cette semaine »
   renderWeekArchive();
+
+  // ★ v3.18 — (Ré)activer le glisser-déposer des sections projet
+  initSuiviSortable();
 }
+
+// ═══════════════════════════════════════════════════════════════
+//  ★ v3.18 — RÉORDONNANCEMENT DES PROJETS PAR GLISSER-DÉPOSER
+//  Poignée ⠿ dédiée (mobile-safe). Au lâcher : les numéros sont
+//  recalculés 1..N selon le nouvel ordre et sauvegardés via l'API
+//  existante (setProjectNumbers) → synchronisés PC/mobile.
+// ═══════════════════════════════════════════════════════════════
+
+let _suiviSortable = null;
+let _suiviDragging = false;  // garde : pas de re-render pendant un drag
+
+function initSuiviSortable() {
+  const container = document.getElementById('suiviContainer');
+  if (!container || typeof Sortable === 'undefined') return;
+
+  // Détruire l'instance précédente (le DOM vient d'être reconstruit)
+  if (_suiviSortable) {
+    try { _suiviSortable.destroy(); } catch(e) {}
+    _suiviSortable = null;
+  }
+
+  const sections = container.querySelectorAll('.suivi-section');
+  if (sections.length < 2) return;  // rien à réordonner
+
+  _suiviSortable = Sortable.create(container, {
+    handle: '.drag-handle',
+    draggable: '.suivi-section',
+    animation: 150,
+    delay: 100,
+    delayOnTouchOnly: true,  // sur mobile : petit délai pour distinguer du scroll
+    ghostClass: 'suivi-ghost',
+    chosenClass: 'suivi-chosen',
+    onStart: () => { _suiviDragging = true; },
+    onEnd: async () => {
+      _suiviDragging = false;
+      await saveProjectOrderFromDom();
+    }
+  });
+}
+
+// Construit le mapping complet des numéros à partir de l'ordre du DOM :
+// - les sections visibles prennent 1..N dans leur nouvel ordre
+// - les autres projets déjà numérotés (invisibles ou historiques) suivent
+//   à partir de N+1, dans leur ordre relatif actuel (aucune collision)
+async function saveProjectOrderFromDom() {
+  const container = document.getElementById('suiviContainer');
+  if (!container) return;
+
+  const visibleOrder = Array.from(container.querySelectorAll('.suivi-section'))
+    .map(el => el.dataset.project)
+    .filter(Boolean);
+  if (visibleOrder.length < 2) return;
+
+  const newNumbers = {};
+  let pos = 1;
+  visibleOrder.forEach(p => { newNumbers[p] = pos++; });
+
+  // Préserver les autres projets numérotés, à la suite, dans leur ordre actuel
+  Object.keys(projectNumbers)
+    .filter(p => !(p in newNumbers))
+    .sort((a, b) => projectNumbers[a] - projectNumbers[b])
+    .forEach(p => { newNumbers[p] = pos++; });
+
+  const r = await apiCall('setProjectNumbers', { numbers: newNumbers });
+  if (r.ok && r.data && r.data.status === 'ok') {
+    projectNumbers = r.data.projectNumbers || newNumbers;
+    renderSuivi();  // rafraîchir les badges № et les chips
+    toast('✓ Ordre des projets enregistré');
+  } else {
+    toast('❌ ' + ((r.data && r.data.message) || 'Erreur de sauvegarde de l\'ordre'));
+    renderSuivi();  // revenir à l'ordre serveur
+  }
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 //  ★ v3.16 — VOLET « FAIT CETTE SEMAINE » (mode hebdo)
