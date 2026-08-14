@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SIYO — Gestionnaire de Tâches v3.18</title>
+<title>SIYO — Gestionnaire de Tâches v3.19</title>
 
 <!-- ★ v3.8 — Bibliothèques PDF (chargées via CDN, mises en cache nav.) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -302,6 +302,16 @@
   .drag-handle:active { cursor:grabbing; }
   .suivi-ghost { opacity:0.35; border:2px dashed var(--primary) !important; }
   .suivi-chosen { box-shadow:0 6px 20px rgba(15,52,96,0.22) !important; }
+
+  /* ★ v3.19 — Bouton ➕ d'ajout rapide par projet */
+  .quick-add-btn {
+    display:inline-flex; align-items:center; justify-content:center;
+    width:26px; height:26px; margin-left:8px; flex-shrink:0;
+    border:1px solid var(--border); border-radius:8px; background:#fff;
+    color:var(--accent-light); font-size:16px; font-weight:700; line-height:1;
+    cursor:pointer; transition:all 0.15s; padding:0;
+  }
+  .quick-add-btn:hover { background:var(--accent-light); color:#fff; border-color:var(--accent-light); }
 
   /* ★ v3.12 — Vue Recherche (historique filtrable) */
   .search-filters {
@@ -1485,6 +1495,9 @@
 
   <!-- ★ v3.8 — Barre d'actions Suivi (export PDF + sync manuel v3.9.5) -->
   <div id="suiviActionBar" style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-primary" onclick="openQuickAdd(null)" style="padding:8px 14px;font-size:14px;display:inline-flex;align-items:center;gap:6px;margin-right:auto">
+      <span>➕</span><span>Nouvelle tâche</span>
+    </button>
     <button class="btn btn-outline" onclick="manualSync()" id="manualSyncBtn" title="Rafraîchir les données depuis Google Sheets" style="padding:8px 14px;font-size:14px;display:inline-flex;align-items:center;gap:6px">
       <span id="manualSyncIcon">↻</span><span>Actualiser</span>
     </button>
@@ -1767,6 +1780,52 @@
   </div>
 </div>
 
+<!-- ★ v3.19 — MODAL AJOUT RAPIDE (bouton ➕ des projets / bouton global du Suivi) -->
+<div class="modal-overlay" id="quickAddModal">
+  <div class="modal">
+    <div class="modal-head"><h3 id="quickAddTitle">➕ Nouvelle tâche</h3></div>
+    <div class="modal-body">
+      <div class="input-group">
+        <label>Tâche</label>
+        <input type="text" id="qaText" placeholder="Ex: Relancer le fournisseur..." autocomplete="off"
+          onkeydown="if(event.key==='Enter'){quickAddSubmit()}">
+      </div>
+      <div class="input-group" id="qaProjectGroup" style="margin-top:12px">
+        <label>Projet</label>
+        <input type="text" id="qaProject" list="qaProjectList" placeholder="Choisir ou taper..." autocomplete="off">
+        <datalist id="qaProjectList"></datalist>
+      </div>
+      <div class="input-group" style="margin-top:12px">
+        <label>Échéance</label>
+        <input type="date" id="qaDueDate" autocomplete="off">
+      </div>
+      <div class="input-group" id="qaCompanyGroup" style="margin-top:12px;display:none">
+        <label>Entreprise <span style="color:var(--text-muted);font-weight:400;font-size:13px">(optionnel)</span></label>
+        <select id="qaCompany" autocomplete="off"
+          style="padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:15px;font-family:'DM Sans',sans-serif;background:#fff;color:var(--text-dark);width:100%">
+          <option value="">— Aucune —</option>
+          <option value="SIYO">SIYO</option>
+          <option value="SIYO LIMITED">SIYO LIMITED</option>
+        </select>
+      </div>
+      <div class="input-group" id="qaAssigneeGroup" style="margin-top:12px;display:none">
+        <label>Assigné à <span style="color:var(--text-muted);font-weight:400;font-size:13px">(optionnel)</span></label>
+        <select id="qaAssignee" autocomplete="off"
+          style="padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:15px;font-family:'DM Sans',sans-serif;background:#fff;color:var(--text-dark);width:100%">
+          <option value="">Non assigné</option>
+          <option value="Lionnel">Lionnel</option>
+          <option value="Sandrine">Sandrine</option>
+          <option value="Mickael">Mickael</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-outline" onclick="closeQuickAdd()">Annuler</button>
+      <button class="btn btn-primary" onclick="quickAddSubmit()">➕ Ajouter</button>
+    </div>
+  </div>
+</div>
+
 <!-- ★ v3.6 — MODAL BLOCAGE -->
 <div class="modal-overlay" id="blockModal">
   <div class="modal">
@@ -1884,7 +1943,7 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<div class="footer">SIYO — Gestionnaire de Tâches v3.18 (projets : glisser-déposer)</div>
+<div class="footer">SIYO — Gestionnaire de Tâches v3.19 (ajout rapide depuis le Suivi)</div>
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" style="
@@ -3048,41 +3107,34 @@ function switchTab(tab, btn) {
 // ══════════════════════════════════════
 //  SAISIE
 // ══════════════════════════════════════
-async function addTask() {
-  if (!guardWrite('addTask')) return;
+/**
+ * ★ v3.19 — Cœur de la création de tâche, réutilisé par le formulaire Saisie
+ * ET la modale rapide du Suivi. Un seul chemin de création = zéro divergence.
+ * Retourne true si la tâche a été créée.
+ */
+async function createTaskFlow(values) {
+  if (!guardWrite('addTask')) return false;
 
-  const text = document.getElementById('fText').value.trim();
-  const project = document.getElementById('fProject').value.trim();
-  // v3.5 : priorité masquée UI, on fixe à 3 (Normale) en base
-  const priority = 3;
-  if(!text) { document.getElementById('fText').focus(); return; }
-
-  const projectFinal = project || 'Sans projet';
-
-  // ★ v3.7 — Échéance : par défaut aujourd'hui si vide
-  let dueDate = document.getElementById('fDueDate').value.trim();
-  if (!dueDate) dueDate = defaultDueIso();  // ★ v3.16 : dimanche en mode hebdo
-
-  // ★ v3.11 — Entreprise (tous espaces) + assignation (compta only)
-  const company = document.getElementById('fCompany') ? document.getElementById('fCompany').value : '';
-  let assignee = '';
-  if (spaceHasAssignment(currentSpace)) {
-    const aEl = document.getElementById('fAssignee');
-    assignee = aEl ? aEl.value : '';
-  }
+  const text = (values.text || '').trim();
+  if (!text) return false;
+  const projectFinal = (values.project || '').trim() || 'Sans projet';
+  let dueDate = (values.dueDate || '').trim();
+  if (!dueDate) dueDate = defaultDueIso();
+  const company = values.company || '';
+  const assignee = values.assignee || '';
 
   // Anti-doublon STRICT côté client (pré-check)
   const dup = findDuplicateTask(text, projectFinal);
   if (dup) {
     toast(`⚠ Cette tâche existe déjà sur le projet "${projectFinal}". Ajoutée par toi ou ton collègue.`);
-    return;
+    return false;
   }
 
   const task = {
     id: genId(),
     text,
     project: projectFinal,
-    priority,
+    priority: 3,
     status: 'pending',
     createdAt: new Date().toISOString(),
     dueDate: dueDate,   // ★ v3.7
@@ -3098,22 +3150,13 @@ async function addTask() {
       await loadAll();
       renderSaisie();
       if (document.getElementById('panel-suivi').classList.contains('active')) renderSuivi();
-      return;
+      return false;
     }
     toast('❌ Erreur : ' + r.error);
-    return;
+    return false;
   }
 
   tasks.push(task);
-  document.getElementById('fText').value = '';
-  document.getElementById('fProject').value = '';
-  // ★ v3.7 — On reset le champ date à aujourd'hui après ajout
-  document.getElementById('fDueDate').value = defaultDueIso();  // ★ v3.16
-  // ★ v3.11 — Reset entreprise + assignation
-  if (document.getElementById('fCompany')) document.getElementById('fCompany').value = '';
-  if (document.getElementById('fAssignee')) document.getElementById('fAssignee').value = '';
-  document.getElementById('fText').focus();
-  renderSaisie();
   updateHeader();
 
   // Toast contextuel selon l'échéance
@@ -3135,6 +3178,112 @@ async function addTask() {
     toast(`✓ Tâche anticipée (échéance ${formatDateFr(dueDate)})`);
   } else {
     toast('✓ Tâche ajoutée (échéance passée — apparaîtra EN RETARD)');
+  }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ★ v3.19 — AJOUT RAPIDE depuis le Suivi
+//  - Bouton ➕ sur un projet : le projet est pré-fixé (champ masqué)
+//  - Bouton global : champ projet avec suggestions (datalist)
+// ═══════════════════════════════════════════════════════════════
+
+let _quickAddProject = null;  // projet pré-fixé (null = choix libre)
+
+function openQuickAdd(project) {
+  _quickAddProject = project || null;
+
+  const title = document.getElementById('quickAddTitle');
+  const projGroup = document.getElementById('qaProjectGroup');
+  if (_quickAddProject) {
+    title.textContent = '➕ Nouvelle tâche — ' + _quickAddProject;
+    projGroup.style.display = 'none';
+  } else {
+    title.textContent = '➕ Nouvelle tâche';
+    projGroup.style.display = '';
+    // Alimenter les suggestions de projets (datalist native)
+    const dl = document.getElementById('qaProjectList');
+    if (dl) {
+      const projects = Array.from(new Set(tasks.map(t => t.project || 'Sans projet')))
+        .sort(compareProjects);
+      dl.innerHTML = projects.map(p => `<option value="${escAttr(p)}">`).join('');
+    }
+    document.getElementById('qaProject').value = '';
+  }
+
+  document.getElementById('qaText').value = '';
+  document.getElementById('qaDueDate').value = defaultDueIso();
+
+  // Champs selon l'espace (entreprise / assignation)
+  const compGroup = document.getElementById('qaCompanyGroup');
+  if (compGroup) compGroup.style.display = spaceHasCompany(currentSpace) ? '' : 'none';
+  if (document.getElementById('qaCompany')) document.getElementById('qaCompany').value = '';
+  const assiGroup = document.getElementById('qaAssigneeGroup');
+  if (assiGroup) assiGroup.style.display = spaceHasAssignment(currentSpace) ? '' : 'none';
+  if (document.getElementById('qaAssignee')) document.getElementById('qaAssignee').value = '';
+
+  document.getElementById('quickAddModal').classList.add('show');
+  setTimeout(() => document.getElementById('qaText').focus(), 60);
+}
+
+function closeQuickAdd() {
+  document.getElementById('quickAddModal').classList.remove('show');
+  _quickAddProject = null;
+}
+
+async function quickAddSubmit() {
+  const text = document.getElementById('qaText').value.trim();
+  if (!text) { document.getElementById('qaText').focus(); return; }
+
+  const project = _quickAddProject || document.getElementById('qaProject').value;
+
+  let assignee = '';
+  if (spaceHasAssignment(currentSpace)) {
+    const aEl = document.getElementById('qaAssignee');
+    assignee = aEl ? aEl.value : '';
+  }
+
+  const ok = await createTaskFlow({
+    text: text,
+    project: project,
+    dueDate: document.getElementById('qaDueDate').value,
+    company: (spaceHasCompany(currentSpace) && document.getElementById('qaCompany')) ? document.getElementById('qaCompany').value : '',
+    assignee: assignee
+  });
+
+  if (ok) {
+    closeQuickAdd();
+    renderSuivi();
+    renderProjectChips();
+  }
+}
+
+async function addTask() {
+  const text = document.getElementById('fText').value.trim();
+  if (!text) { document.getElementById('fText').focus(); return; }
+
+  let assignee = '';
+  if (spaceHasAssignment(currentSpace)) {
+    const aEl = document.getElementById('fAssignee');
+    assignee = aEl ? aEl.value : '';
+  }
+
+  const ok = await createTaskFlow({
+    text: text,
+    project: document.getElementById('fProject').value,
+    dueDate: document.getElementById('fDueDate').value,
+    company: document.getElementById('fCompany') ? document.getElementById('fCompany').value : '',
+    assignee: assignee
+  });
+
+  if (ok) {
+    document.getElementById('fText').value = '';
+    document.getElementById('fProject').value = '';
+    document.getElementById('fDueDate').value = defaultDueIso();  // ★ v3.16
+    if (document.getElementById('fCompany')) document.getElementById('fCompany').value = '';
+    if (document.getElementById('fAssignee')) document.getElementById('fAssignee').value = '';
+    document.getElementById('fText').focus();
+    renderSaisie();
   }
 }
 
@@ -4872,6 +5021,7 @@ function renderSuivi() {
       <div class="project-dot" style="background:${color};width:10px;height:10px"></div>
       ${numBadge}
       <span class="section-name">${esc(proj)}</span>
+      <button class="quick-add-btn" title="Ajouter une tâche à ${escAttr(proj)}" onclick="event.stopPropagation();openQuickAdd('${escAttr(proj)}')">＋</button>
       <span class="section-count">${done}/${total}${cancelled?' · '+cancelled+' ann.':''}${blockedTxt}${overdueTxt}${futureTxt}</span>
       <span class="chevron">▼</span>
     `;
